@@ -12,12 +12,13 @@ cmake_minimum_required(VERSION 3.4.1)
 #add_library(libtool STATIC IMPORTED)
 #set_target_properties(libtool PROPERTIES IMPORTED_LOCATION  ${CMAKE_SOURCE_DIR}/libs/${ANDROID_ABI}/libtool.a)
 file(GLOB native_srcc "${CMAKE_SOURCE_DIR}/*.cpp")
+project("hello")
 add_subdirectory(mbedtls-2.25.0)
 add_subdirectory(curl-7.74.0)
 #include_directories(mbedtls/include)
 add_library(
         native-lib
-        SHARED
+        STATIC
         public.c
         native-lib.cpp
         )
@@ -28,3 +29,20 @@ target_link_libraries(
         libcurl
         mbedtls
         log)
+add_library(fakelib SHARED empty.c)
+target_link_libraries(
+        fakelib
+        native-lib
+)
+add_custom_command(TARGET fakelib
+        POST_BUILD
+        COMMAND ${CMAKE_AR} -x $<TARGET_FILE:libcurl>
+        COMMAND ${CMAKE_AR} -x $<TARGET_FILE:mbedtls>
+        COMMAND ${CMAKE_AR} -x $<TARGET_FILE:mbedcrypto>
+        COMMAND ${CMAKE_AR} -x $<TARGET_FILE:mbedx509>
+        COMMAND ${CMAKE_AR} -x $<TARGET_FILE:native-lib>
+        COMMAND ${CMAKE_AR} -qcs ${CMAKE_BINARY_DIR}/lib${PROJECT_NAME}.a $$\(echo *.o\)
+        COMMAND rm *.o
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        DEPENDS native-lib
+        )
