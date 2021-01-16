@@ -6,11 +6,25 @@
 #include <unistd.h>
 #include "curl/curl.h"
 #include "public.h"
+#include "mbedtls/debug.h"
 #include "mbedtls/ssl.h"
-#include "mbedtls/x509.h"
+#include "mbedtls/entropy.h"
+#include "mbedtls/ctr_drbg.h"
+#include "mbedtls/error.h"
+#include "mbedtls/certs.h"
 #include <android/log.h>
 
 #include <curl/curl.h>
+mbedtls_x509_crt g_crt;
+
+static void my_debug( void *ctx, int level,
+                      const char *file, int line,
+                      const char *str )
+{
+    ((void) level);
+
+    __android_log_print( ANDROID_LOG_ERROR, "HxBreak", "%s:%04d: %s", file, line, str );
+}
 
 static size_t writefunction(void *ptr, size_t size, size_t nmemb, void *stream)
 {
@@ -22,10 +36,7 @@ static CURLcode sslctx_function(CURL *curl, void *sslctx, void *parm)
 {
     CURLcode rv = CURLE_ABORTED_BY_CALLBACK;
     auto ctx = reinterpret_cast<mbedtls_ssl_config *>(sslctx);
-    mbedtls_x509_crt crt;
-    mbedtls_x509_crt_init(&crt);
-    mbedtls_x509_crt_parse(&crt, cacert, cacert_len);
-    mbedtls_ssl_conf_ca_chain(ctx, &crt, NULL);
+    mbedtls_ssl_conf_ca_chain(ctx, &g_crt, NULL);
     rv = CURLE_OK;
     return rv;
 }
@@ -37,40 +48,14 @@ int test(void)
 
     curl_global_init(CURL_GLOBAL_ALL);
     ch = curl_easy_init();
-    curl_easy_setopt(ch, CURLOPT_VERBOSE, 0L);
+    curl_easy_setopt(ch, CURLOPT_VERBOSE, 1L);
     curl_easy_setopt(ch, CURLOPT_HEADER, 0L);
     curl_easy_setopt(ch, CURLOPT_NOPROGRESS, 1L);
     curl_easy_setopt(ch, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(ch, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(ch, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(ch, CURLOPT_SSL_VERIFYHOST, 1L);
     curl_easy_setopt(ch, CURLOPT_URL, "https://www.baidu.com/");
 
-    /* Turn off the default CA locations, otherwise libcurl will load CA
-     * certificates from the locations that were detected/specified at
-     * build-time
-     */
-    curl_easy_setopt(ch, CURLOPT_CAINFO, NULL);
-    curl_easy_setopt(ch, CURLOPT_CAPATH, NULL);
-
-    /* first try: retrieve page without ca certificates -> should fail
-     * unless libcurl was built --with-ca-fallback enabled at build-time
-     */
-    rv = curl_easy_perform(ch);
-    if(rv == CURLE_OK)
-        printf("*** transfer succeeded ***\n");
-    else
-        printf("*** transfer failed ***\n");
-
-    /* use a fresh connection (optional)
-     * this option seriously impacts performance of multiple transfers but
-     * it is necessary order to demonstrate this example. recall that the
-     * ssl ctx callback is only called _before_ an SSL connection is
-     * established, therefore it will not affect existing verified SSL
-     * connections already in the connection cache associated with this
-     * handle. normally you would set the ssl ctx function before making
-     * any transfers, and not use this option.
-     */
-    curl_easy_setopt(ch, CURLOPT_FRESH_CONNECT, 1L);
 
     /* second try: retrieve page using cacerts' certificate -> will succeed
      * load the certificate by installing a function doing the necessary
@@ -78,6 +63,7 @@ int test(void)
      */
     curl_easy_setopt(ch, CURLOPT_SSL_CTX_FUNCTION, sslctx_function);
     rv = curl_easy_perform(ch);
+    __android_log_print(ANDROID_LOG_ERROR, "HxBreak", "ErrorCode: %d", rv);
     if(rv == CURLE_OK)
         printf("*** transfer succeeded ***\n");
     else
@@ -92,9 +78,11 @@ int test(void)
 extern "C"
 JNIEXPORT jstring JNICALL
 Java_com_example_hookdemo_MainActivity_stringFromJNI(JNIEnv *env, jobject thiz) {
-    if (test() == CURLE_OK){
-        return env->NewStringUTF("OK");
-    }else{
+    mbedtls_x509_crt_init(&g_crt);
+    auto ret = mbedtls_x509_crt_parse(&g_crt, cacert, cacert_len);
+    if (ret < 0 || test() != CURLE_OK){
         return env->NewStringUTF("ERROR");
+    }else{
+        return env->NewStringUTF("OK");
     }
 }
